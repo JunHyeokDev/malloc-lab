@@ -68,8 +68,8 @@ static void add_free_block(void *bp);
 #define PREV_BLKP(bp)       ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))       // 이전 블록의 bp를 반환 (현재 bp에서 이전 블록의 크기를 빼준 값 -> DSIZE를 빼야 이전 블록의 정보를 가져올 수 있음!!)
 
 // Find Successor and Find Predecessor
-#define FIND_SUCC(bp)       (*(void**)(bp+WSIZE))
-#define FIND_PRED(bp)       (*(void**)(bp))
+#define FIND_SUCC(bp)       (*(void**)(bp+WSIZE))               // 후임자 (Next) 찾기
+#define FIND_PRED(bp)       (*(void**)(bp))                     // 전임자 (Prev) 찾기
 
 /* single word (4) or double word (8) alignment */
 // 정렬할 크기
@@ -97,6 +97,8 @@ static char *free_listp = NULL;         // free_list에 대한 주소
  * - 프롤로그 블록: header, footer로 구성된 8 byte 할당 블록 
  * - 에필로그 블록: header로 구성된 0 byte 할당 블록
  */
+
+/* Implicit way */
 // int mm_init(void)
 // {
 //     if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)       // 오류 발생 시 return -1
@@ -117,18 +119,16 @@ static char *free_listp = NULL;         // free_list에 대한 주소
 int mm_init(void)
 {
     // 초기 힙 생성
-    if ((free_listp = mem_sbrk(8 * WSIZE)) == (void *)-1) // 8워드 크기의 힙 생성, free_listp에 힙의 시작 주소값 할당(가용 블록만 추적)
+    if ((heap_listp = mem_sbrk(6 * WSIZE)) == (void *)-1) // 8워드 크기의 힙 생성, free_listp에 힙의 시작 주소값 할당(가용 블록만 추적)
         return -1;
-    PUT(free_listp, 0);                                // 정렬 패딩
-    PUT(free_listp + (1 * WSIZE), PACK(2 * WSIZE, 1)); // 프롤로그 Header
-    PUT(free_listp + (2 * WSIZE), PACK(2 * WSIZE, 1)); // 프롤로그 Footer
-    PUT(free_listp + (3 * WSIZE), PACK(4 * WSIZE, 0)); // 첫 가용 블록의 헤더
-    PUT(free_listp + (4 * WSIZE), NULL);               // 이전 가용 블록의 주소
-    PUT(free_listp + (5 * WSIZE), NULL);               // 다음 가용 블록의 주소
-    PUT(free_listp + (6 * WSIZE), PACK(4 * WSIZE, 0)); // 첫 가용 블록의 푸터
-    PUT(free_listp + (7 * WSIZE), PACK(0, 1));         // 에필로그 Header: 프로그램이 할당한 마지막 블록의 뒤에 위치하며, 블록이 할당되지 않은 상태를 나타냄
+        PUT(heap_listp, 0);                                         // Padding (8의 배수로 정렬하기 위해 패딩 블록 할당)
+        PUT(heap_listp + (1 * WSIZE), PACK(2*DSIZE, 1));            // Prologue Header
+        PUT(heap_listp + (2 * WSIZE), NULL);
+        PUT(heap_listp + (3 * WSIZE), NULL);          
+        PUT(heap_listp + (4 * WSIZE), PACK(2*DSIZE, 1));            // Prologue Footer
+        PUT(heap_listp + (5 * WSIZE), PACK(0, 1));                  // Epilogue Header
 
-    free_listp += (4 * WSIZE); // 첫번째 가용 블록의 bp
+    free_listp = heap_listp + DSIZE;
 
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
@@ -177,7 +177,6 @@ void *mm_malloc(size_t size)
     if ((bp = find_fit(allocated_size)) != NULL)                            // find_fit 함수로 할당된 크기를 넣을 공간이 있는지 체크
     {
         place(bp, allocated_size);
-        next_listp = bp;
         return bp;
     }
 
@@ -186,7 +185,6 @@ void *mm_malloc(size_t size)
         return NULL;
     
     place(bp, allocated_size);                                              // 확장이 됐다면, 공간을 할당하고 분할
-    next_listp = bp;
     return bp;
 }
 
@@ -196,17 +194,17 @@ void *mm_malloc(size_t size)
 void mm_free(void *bp)
 {
     size_t size = GET_SIZE(HDRP(bp));           // 해당 블록의 사이즈 저장
-
     PUT(HDRP(bp), PACK(size, 0));               // 해당 블록의 Header -> free(0) 설정
     PUT(FTRP(bp), PACK(size, 0));               // 해당 블록의 Footer -> free(0) 설정
     coalesce(bp);                               // free 블록 연결 함수 호출
 }
-
+/*
+ * add_free_block - 프리 블록을 연결리스트 제일 첫 번째에 넣어줍니다.
+ */
 static void add_free_block(void *bp) { 
     FIND_SUCC(bp) = free_listp;
-    if (free_listp != NULL) {
-        FIND_PRED(free_listp) = bp;
-    }
+    FIND_PRED(bp) = NULL;
+    FIND_PRED(free_listp) = bp;
     free_listp = bp;
 }
 
@@ -222,7 +220,7 @@ static void *coalesce(void *bp)
 
     // Case 1: prev 할당 불가(1) & next 할당 불가(1)
     if (prev_alloc && next_alloc) {
-        add_free_block(bp);
+        add_free_block(bp); // free 됐을 때 coalesce가 호출되므로, free 된 block을 연결리스트에 추가 해줍니다.
         return bp;
     }
     // Case 2: prev 할당 불가(1) & next 할당 가능(0) 
@@ -254,21 +252,18 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));                                    // 다음 블록 Footer에 새로운 사이즈와 free(0) 설정
         bp = PREV_BLKP(bp);                                                         // bp를 이전 블록의 위치로 변경
     }
-
     add_free_block(bp);
     return bp;
 }
 
 static void remove_free_block(void *bp) {
-    if (bp == free_listp) {
-        free_listp = FIND_SUCC(free_listp);
-        return;
+    if (bp == free_listp) {                 // 삭제하려는 bp가 리스트의 시작점이면.
+        FIND_PRED(FIND_SUCC(bp)) = NULL;    // bp의 다음 지점에서의 Prev를 Null로 설정하면 해당 지점이 첫 지점이 됩니다.
+        free_listp = FIND_SUCC(free_listp); // free_listp를 다음 칸으로 옮깁니다.
     }
-    else { 
+    else {                                  // 중간지점 어딘가라면..
         FIND_SUCC(FIND_PRED(bp)) = FIND_SUCC(bp);
-        if (FIND_SUCC(bp) != NULL) {
-            FIND_PRED(FIND_SUCC(bp)) = FIND_PRED(bp);
-        }
+        FIND_PRED(FIND_SUCC(bp)) = FIND_PRED(bp);
      }
 }
 
