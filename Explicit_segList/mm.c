@@ -99,25 +99,6 @@ static char *free_listp = NULL;         // free_list에 대한 주소
  * - 프롤로그 블록: header, footer로 구성된 8 byte 할당 블록 
  * - 에필로그 블록: header로 구성된 0 byte 할당 블록
  */
-
-/* Implicit way */
-// int mm_init(void)
-// {
-//     if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)       // 오류 발생 시 return -1
-//         return -1;
-
-//     PUT(heap_listp, 0);                                         // Padding (8의 배수로 정렬하기 위해 패딩 블록 할당)
-//     PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1));              // Prologue Header
-//     PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1));              // Prologue Footer
-//     PUT(heap_listp + (3 * WSIZE), PACK(0, 1));                  // Epilogue Header
-//     heap_listp += (2 * WSIZE);                                  // Prologue의 Footer와 Epilogue의 Header 사이에 포인터 위치
-
-//     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)                 // CHUNK SIZE를 워드 단위로 환산해서 brk 확장
-//         return -1;
-    
-//     return 0;
-// }
-
 int mm_init(void)
 {
     int idx;
@@ -241,7 +222,7 @@ static void add_free_block(void *bp) {
     }
     else {
         // search_ptr == NULL
-        // insert_ptr != NULL 인 상황.
+        // insert_ptr != NULL 인 상황.ㄴ
         // 즉, 사이즈가 제일 커서 seg_list[idx] 의 제일 끝에 온 상황입니다.
         if (insert_ptr != NULL) {
             FIND_SUCC(bp) = NULL;
@@ -256,10 +237,6 @@ static void add_free_block(void *bp) {
             seg_list[idx] = bp;
         }
     }
-
-
-    
-    
 }
 
 
@@ -409,28 +386,61 @@ static void *find_fit(size_t asize)
     }
     return NULL;
 }
-
-
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  * - 메모리 재할당 함수
  */
 void *mm_realloc(void *ptr, size_t size)
-{
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;                        // 새 메모리 블록에 복사해야 할 데이터의 크기
+{   
     
-    newptr = mm_malloc(size);               // 요청한 사이즈만큼 블록 할당
-    if (newptr == NULL)
+    if (size == 0) {        // 사이즈가 0인 경우에는 메모리 해제해주고 return NULL;
+        mm_free(ptr);
         return NULL;
-    
-    copySize = GET_SIZE(HDRP(oldptr)) - DSIZE;      // 이전 블록 사이즈를 copySize에 저장
-    
-    if (size < copySize)                    // 요청한 size가 원래 크기보다 작다면,
-        copySize = size;                    // 기존 메모리 블록에서 일부만 복사해야 하므로 copySize를 요청한 크기로 설정
-    
-    memcpy(newptr, oldptr, copySize);       // 이전 블록에서 copySize만큼의 데이터를 새 블록에 복사
-    mm_free(oldptr);                        // 기존 블록 free
-    return newptr;                                          
+    }
+    if (ptr == NULL) {      // 주소가 없는 경우 요구에 맞는 size만큼 malloc을 해주면 ptr이 반환됨/
+        return mm_malloc(size);
+    }
+
+    void *oldptr = ptr;
+    void *newptr = oldptr;
+
+    size_t oldsize = GET_SIZE(HDRP(oldptr));
+    size_t newsize = ALIGN(size + DSIZE);
+
+    // 이전의 사이즈가 더 큰경우
+    if (oldsize >= newsize) {
+        size_t rest = oldsize - newsize;
+        if (rest >= 2 * DSIZE) {
+            // 나머지가 16바이트 이상이면 분할
+            PUT(HDRP(oldptr), PACK(newsize, 1));
+            PUT(FTRP(oldptr), PACK(newsize, 1));
+            oldptr = NEXT_BLKP(oldptr);
+            PUT(HDRP(oldptr), PACK(rest, 0));
+            PUT(FTRP(oldptr), PACK(rest, 0));
+            add_free_block(oldptr);
+        }
+        return newptr;
+    }
+
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(oldptr)));
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(oldptr)));
+    size_t nextsize = GET_SIZE(HDRP(NEXT_BLKP(oldptr)));
+    size_t combined_size = oldsize +  nextsize;
+
+    if (!next_alloc && combined_size >= newsize) { // 다음 블록이 할당되지 않고, 합친 사이즈가 할당하려는 new 사이즈보다 크면
+        // Coalesce with the next block
+        remove_free_block(NEXT_BLKP(oldptr));
+        PUT(HDRP(oldptr), PACK(combined_size, 1));
+        PUT(FTRP(oldptr), PACK(combined_size, 1));
+        return newptr;
+    }
+    // 만약 다음 블록이 이미 할당 되어 있거나, 새롭게 할당하려는 사이즈가 너무 커서 다음 블록을 사용해도 할당할 수 없다면
+    // 그 때서야 새로 할당.
+    newptr = mm_malloc(size);
+    if (!newptr) {
+        return NULL;
+    }
+    memcpy(newptr, oldptr, oldsize - DSIZE);
+    mm_free(oldptr);
+    return newptr;
 }
