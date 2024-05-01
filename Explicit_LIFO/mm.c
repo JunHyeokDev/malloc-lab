@@ -96,6 +96,29 @@ static char *free_listp = NULL;         // free_list에 대한 주소
  * - 프롤로그 블록: header, footer로 구성된 8 byte 할당 블록 
  * - 에필로그 블록: header로 구성된 0 byte 할당 블록
  */
+// int mm_init(void)
+// {
+//     // 초기 힙 생성
+//     if ((free_listp = mem_sbrk(8 * WSIZE)) == (void *)-1) // 8워드 크기의 힙 생성, free_listp에 힙의 시작 주소값 할당(가용 블록만 추적)
+//         return -1;
+//     PUT(free_listp, 0);                                // 정렬 패딩
+//     PUT(free_listp + (1 * WSIZE), PACK(2 * WSIZE, 1)); // 프롤로그 Header
+//     PUT(free_listp + (2 * WSIZE), PACK(2 * WSIZE, 1)); // 프롤로그 Footer
+//     PUT(free_listp + (3 * WSIZE), PACK(4 * WSIZE, 0)); // 첫 가용 블록의 헤더
+//     PUT(free_listp + (4 * WSIZE), NULL);               // 이전 가용 블록의 주소
+//     PUT(free_listp + (5 * WSIZE), NULL);               // 다음 가용 블록의 주소
+//     PUT(free_listp + (6 * WSIZE), PACK(4 * WSIZE, 0)); // 첫 가용 블록의 푸터
+//     PUT(free_listp + (7 * WSIZE), PACK(0, 1));         // 에필로그 Header: 프로그램이 할당한 마지막 블록의 뒤에 위치하며, 블록이 할당되지 않은 상태를 나타냄
+
+//     free_listp += (4 * WSIZE); // 첫번째 가용 블록의 bp
+
+//     // 힙을 CHUNKSIZE bytes로 확장
+//     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
+//         return -1;
+
+//     return 0;
+// }
+
 int mm_init(void)
 {
     // 초기 힙 생성
@@ -116,6 +139,7 @@ int mm_init(void)
 
     return 0;
 }
+
 /*
 * extend_heap - brk 포인터로 힙 영역을 확장하는 함수 (확장 단위는 CHUNK SIZE)
 * - mm_init에서 초기 힙 영역을 확보했다면, 블록이 추가될 때 힙 영역을 확장해주는 역할
@@ -187,6 +211,11 @@ static void add_free_block(void *bp) {
     FIND_PRED(bp) = NULL;
     FIND_PRED(free_listp) = bp;
     free_listp = bp;
+
+    // FIND_SUCC(bp) = free_listp;     // bp의 SUCC은 루트가 가리키던 블록
+    // if (free_listp != NULL)        // free list에 블록이 존재했을 경우만
+    //     FIND_PRED(free_listp) = bp; // 루트였던 블록의 PRED를 추가된 블록으로 연결
+    // free_listp = bp;               // 루트를 현재 블록으로 변경
 }
 
 /*
@@ -245,6 +274,17 @@ static void remove_free_block(void *bp) {
         FIND_SUCC(FIND_PRED(bp)) = FIND_SUCC(bp);
         FIND_PRED(FIND_SUCC(bp)) = FIND_PRED(bp);
     }
+    
+    // if (bp == free_listp) // 분리하려는 블록이 free_list 맨 앞에 있는 블록이면 (이전 블록이 없음)
+    // {
+    //     free_listp = FIND_SUCC(free_listp); // 다음 블록을 루트로 변경
+    //     return;
+    // }
+    // // 이전 블록의 SUCC을 다음 가용 블록으로 연결
+    // FIND_SUCC(FIND_PRED(bp)) = FIND_SUCC(bp);
+    // // 다음 블록의 PRED를 이전 블록으로 변경
+    // if (FIND_SUCC(bp) != NULL) // 다음 가용 블록이 있을 경우만
+    //     FIND_PRED(FIND_SUCC(bp)) = FIND_PRED(bp);
 }
 
 /*
@@ -375,8 +415,8 @@ void *mm_realloc(void *ptr, size_t size)
     // 이전의 사이즈가 더 큰경우
     if (oldsize >= newsize) {
         size_t rest = oldsize - newsize;
-        if (rest >= 3 * DSIZE) {
-            // 나머지가 24바이트 이상이면 분할
+        if (rest >= 2 * DSIZE) {
+            // 나머지가 16바이트 이상이면 분할
             PUT(HDRP(oldptr), PACK(newsize, 1));
             PUT(FTRP(oldptr), PACK(newsize, 1));
             oldptr = NEXT_BLKP(oldptr);
